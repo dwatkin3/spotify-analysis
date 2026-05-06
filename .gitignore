@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Data (VERY IMPORTANT)
+data/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS junk
+.DS_Store
