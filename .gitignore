@@ -11,3 +11,6 @@ data/
 
 # OS junk
 .DS_Store
+
+# Generated analysis output
+outputs/
