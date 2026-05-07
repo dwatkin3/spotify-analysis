@@ -3,6 +3,7 @@ import pandas as pd
 
 from src.load import load_spotify_json, load_playlists, extract_playlist_tracks, load_liked_songs, clean_track_name
 from src.transform import clean_streaming_data
+import argparse
 from src.analysis import (
     top_artists,
     top_tracks,
@@ -18,16 +19,47 @@ from src.analysis import (
     classify_playlist_advanced,
     era_defining_tracks,
     playlist_summary,
-    core_memory_tracks
+    core_memory_tracks,
+    suspicious_playlist_tracks
 )
 
 pd.set_option("display.max_rows", None)
 
 def main():
+
+    # ============================================================
+    # Command-line arguments
+    # ============================================================
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--repair",
+        action="store_true",
+        help="Run playlist import repair analysis",
+    )
+
+    parser.add_argument(
+        "--playlists",
+        action="store_true",
+        help="Run playlist analysis",
+    )
+
+    parser.add_argument(
+        "--memoir",
+        action="store_true",
+        help="Run memoir-style analysis",
+    )
+
+    args = parser.parse_args()
+
     print("Loading data...")
     df_raw = load_spotify_json("data")
 
     print("Cleaning data...")
+
+    repair_df = df_raw.copy()
+
     df = clean_streaming_data(df_raw)
 
     # --- Date range ---
@@ -244,6 +276,107 @@ def main():
             f"(in {row['playlist_count']} playlists, "
             f"{format_minutes(row['minutes_played'])})"
         )
+
+    if args.repair:
+
+        print("\nPossible Playlist Import Errors:")
+
+        # ============================================================
+        # Only analyse TuneMyMusic imported playlists
+        # ============================================================
+
+        tmm_playlists = pl[
+            pl["description"]
+            .fillna("")
+            .str.lower()
+            .str.contains("tunemymusic")
+        ]
+
+        print(f"\nTuneMyMusic playlists found: {len(tmm_playlists)}")
+
+        tmm_names = (
+                    tmm_playlists["name"]
+                    .astype(str)
+                    .str.strip()
+                    .str.lower()
+                    .unique()
+        )
+
+        tmm_tracks = pl_tracks[
+            pl_tracks["playlist_name"].isin(tmm_names)
+        ]
+
+        sus = suspicious_playlist_tracks(
+                                            df_raw,
+                                            tmm_tracks
+        )
+
+        # ============================================================
+        # Export suspicious tracks to spreadsheet
+        # ============================================================
+
+        output_path = "outputs/playlist_repair_report.xlsx"
+
+        with pd.ExcelWriter(output_path) as writer:
+
+            # All suspicious tracks
+            sus.to_excel(
+                writer,
+                sheet_name="All Suspicious",
+                index=False
+            )
+
+            # High confidence only
+            high = sus[sus["confidence"] == "HIGH"]
+
+            high.to_excel(
+                writer,
+                sheet_name="High Confidence",
+                index=False
+            )
+
+            # Medium confidence only
+            medium = sus[sus["confidence"] == "MEDIUM"]
+
+            medium.to_excel(
+                writer,
+                sheet_name="Medium Confidence",
+                index=False
+            )
+
+            # Repeated contamination
+            repeated = (
+                sus.groupby(["artist", "track"])
+                .size()
+                .reset_index(name="playlist_count")
+                .sort_values("playlist_count", ascending=False)
+            )
+
+            repeated = repeated[
+                repeated["playlist_count"] > 1
+            ]
+
+            repeated.to_excel(
+                writer,
+                sheet_name="Repeated Tracks",
+                index=False
+            )
+
+        print(f"\nSpreadsheet written to: {output_path}")
+
+        for playlist in sus["playlist_name"].unique():
+
+            print(f"\n=== {playlist} ===")
+
+            subset = sus[sus["playlist_name"] == playlist]
+
+            for _, row in subset.iterrows():
+
+                print(
+                    f"- {row['artist']} – {row['track']} "
+                    f"[{row['confidence']}] "
+                    f"{row['reason']}"
+                )
         
 if __name__ == "__main__":
     main()

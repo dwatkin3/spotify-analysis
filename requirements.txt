@@ -2,4 +2,4 @@ pandas
 matplotlib
 seaborn
 jupyter
-python-dateutil
+python-dateutilopenpyxl

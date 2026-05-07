@@ -1,4 +1,5 @@
 import pandas as pd
+from src.load import clean_track_name
 
 def top_artists(df: pd.DataFrame, n=20):
     return (
@@ -300,3 +301,260 @@ def core_memory_tracks(df_streaming, df_playlists):
         ["playlist_count", "minutes_played"],
         ascending=False
     )
+
+# ============================================================
+# Suspicious Playlist Track Detection
+# Detect likely bad TuneMyMusic imports
+# ============================================================
+
+
+def suspicious_playlist_tracks(df, pl_tracks):
+    """
+    Detect suspicious playlist tracks likely caused by
+    poor TuneMyMusic matching.
+
+    Rules include:
+    - very low play count
+    - very low listening time
+    - high skip rate
+    - suspicious track variants
+    - artists rarely listened to overall
+    """
+
+    
+    # ========================================================
+    # Lightweight cleaning for repair analysis
+    # IMPORTANT:
+    # Keep skips and short plays for anomaly detection
+    # ========================================================
+
+    df = df.copy()
+
+    df = df.rename(columns={
+        "master_metadata_track_name": "track",
+        "master_metadata_album_artist_name": "artist",
+        "ts": "timestamp",
+    })
+
+    df = df[
+        df["track"].notna()
+    ]
+
+    df = df[
+        df["artist"].notna()
+    ]
+
+    df["minutes_played"] = (
+        df["ms_played"] / 60000
+    )
+
+    df["artist_clean"] = (
+        df["artist"]
+        .fillna("")
+        .str.lower()
+        .str.strip()
+    )
+
+    df["track_clean"] = (
+        df["track"]
+        .fillna("")
+        .apply(clean_track_name)
+    )
+
+    # Convert skipped boolean to numeric safely
+    df["skipped"] = (
+        df["skipped"]
+        .fillna(False)
+        .astype(int)
+    )
+
+    # --------------------------------------------------------
+    # Build listening statistics from streaming history
+    # --------------------------------------------------------
+
+    track_stats = (
+        df.groupby(["artist_clean", "track_clean"])
+        .agg(
+            play_count=("track", "count"),
+            minutes_played=("minutes_played", "sum"),
+            skips=("skipped", "sum"),
+        )
+        .reset_index()
+    )
+
+    # Avoid divide-by-zero
+    track_stats["skip_rate"] = (
+        track_stats["skips"] / track_stats["play_count"]
+    ).fillna(0)
+
+    # --------------------------------------------------------
+    # Artist-level listening depth
+    # Helps identify completely alien artists
+    # --------------------------------------------------------
+
+    artist_stats = (
+        df.groupby("artist_clean")
+        .agg(
+            artist_minutes=("minutes_played", "sum")
+        )
+        .reset_index()
+    )
+
+    # --------------------------------------------------------
+    # Merge playlist tracks with listening history
+    # --------------------------------------------------------
+
+    merged = pl_tracks.merge(
+        track_stats,
+        on=["artist_clean", "track_clean"],
+        how="left",
+    )
+
+    merged = merged.merge(
+        artist_stats,
+        on="artist_clean",
+        how="left",
+    )
+
+    # --------------------------------------------------------
+    # Fill missing values
+    # --------------------------------------------------------
+
+    merged["play_count"] = merged["play_count"].fillna(0)
+    merged["minutes_played"] = merged["minutes_played"].fillna(0)
+    merged["skip_rate"] = merged["skip_rate"].fillna(0)
+    merged["artist_minutes"] = merged["artist_minutes"].fillna(0)
+
+    # --------------------------------------------------------
+    # Suspicious variant detection
+    # --------------------------------------------------------
+
+    suspicious_words = [
+        "karaoke",
+        "tribute",
+        "cover",
+        "remix",
+        "instrumental",
+        "re-recorded",
+    ]
+
+    merged["variant_flag"] = (
+        merged["track"]
+        .str.lower()
+        .fillna("")
+        .apply(
+            lambda x: any(
+                word in x for word in suspicious_words
+            )
+        )
+    )
+
+    # --------------------------------------------------------
+    # Calculate suspicion score
+    # --------------------------------------------------------
+
+    merged["suspicion_score"] = 0
+
+    # Rarely played
+    merged.loc[
+        merged["play_count"] <= 1,
+        "suspicion_score"
+    ] += 2
+
+    # Barely listened to
+    merged.loc[
+        merged["minutes_played"] < 1,
+        "suspicion_score"
+    ] += 2
+
+    # Frequently skipped
+    merged.loc[
+        merged["skip_rate"] > 0.5,
+        "suspicion_score"
+    ] += 2
+
+    # Suspicious variant
+    merged.loc[
+        merged["variant_flag"],
+        "suspicion_score"
+    ] += 1
+
+    # Artist rarely listened to overall
+    merged.loc[
+        merged["artist_minutes"] < 10,
+        "suspicion_score"
+    ] += 2
+
+    # --------------------------------------------------------
+    # Confidence levels
+    # --------------------------------------------------------
+
+    merged["confidence"] = "LOW"
+
+    merged.loc[
+        merged["suspicion_score"] >= 5,
+        "confidence"
+    ] = "HIGH"
+
+    merged.loc[
+        merged["suspicion_score"].between(3, 4),
+        "confidence"
+    ] = "MEDIUM"
+
+    # --------------------------------------------------------
+    # Human-readable reason text
+    # --------------------------------------------------------
+
+    def build_reason(row):
+
+        reasons = []
+
+        if row["play_count"] <= 1:
+            reasons.append("rarely played")
+
+        if row["minutes_played"] < 1:
+            reasons.append("almost never listened")
+
+        if row["skip_rate"] > 0.5:
+            reasons.append("frequently skipped")
+
+        if row["variant_flag"]:
+            reasons.append("possible incorrect variant")
+
+        if row["artist_minutes"] < 10:
+            reasons.append("artist rarely listened to")
+
+        return ", ".join(reasons)
+
+    merged["reason"] = merged.apply(
+        build_reason,
+        axis=1
+    )
+
+    # --------------------------------------------------------
+    # Keep suspicious entries only
+    # --------------------------------------------------------
+
+    suspicious = merged[
+        merged["suspicion_score"] >= 3
+    ].copy()
+
+    suspicious = suspicious.sort_values(
+        ["confidence", "suspicion_score"],
+        ascending=False
+    )
+
+    return suspicious[
+        [
+            "playlist_name",
+            "artist",
+            "track",
+            "play_count",
+            "minutes_played",
+            "skip_rate",
+            "artist_minutes",
+            "suspicion_score",
+            "confidence",
+            "reason",
+        ]
+    ]

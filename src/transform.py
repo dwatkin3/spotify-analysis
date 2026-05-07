@@ -1,6 +1,5 @@
 import pandas as pd
-
-import pandas as pd
+from src.load import clean_track_name
 
 
 def clean_streaming_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -17,10 +16,6 @@ def clean_streaming_data(df: pd.DataFrame) -> pd.DataFrame:
     """
 
     df = df.copy()
-
-    # --- DEBUG: check incoming columns ---
-    print("\nColumns in raw data:")
-    print(df.columns.tolist())
 
     # --- Rename columns (extended Spotify format) ---
     df.rename(columns={
@@ -62,5 +57,23 @@ def clean_streaming_data(df: pd.DataFrame) -> pd.DataFrame:
     df["year"] = df["timestamp"].dt.year
     df["month"] = df["timestamp"].dt.to_period("M")
     df["date"] = df["timestamp"].dt.date
+
+    # ============================================================
+    # Normalised matching columns
+    # Used for playlist correlation and repair analysis
+    # ============================================================
+
+    df["artist_clean"] = (
+        df["artist"]
+        .fillna("")
+        .str.lower()
+        .str.strip()
+    )
+
+    df["track_clean"] = (
+        df["track"]
+        .fillna("")
+        .apply(clean_track_name)
+    )
 
     return df

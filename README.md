@@ -295,6 +295,93 @@ The project now forms part technical analysis tool, part family archive, and par
 
 ---
 
+## Playlist Repair & Import Validation
+
+Some older playlists were bulk-imported into Spotify using TuneMyMusic.
+
+During testing it became clear that some imports matched tracks incorrectly — often using only partial title matching rather than artist-aware matching.
+
+Examples include:
+- incorrect remixes,
+- karaoke versions,
+- unrelated artists,
+- modern tracks inserted into older nostalgic playlists,
+- and tracks that were consistently skipped or never replayed.
+
+SpotTool includes an optional repair-analysis mode to help identify these suspicious imports.
+
+### Running Repair Analysis
+
+```bash
+python -m src.run_analysis --repair
+```
+
+This mode analyses TuneMyMusic-imported playlists and flags tracks that appear unusual based on:
+
+- very low play counts,
+- near-zero listening time,
+- frequent skipping,
+- artists rarely listened to elsewhere,
+- suspicious remix/cover/karaoke variants,
+- and tracks that stylistically do not fit the surrounding playlist.
+
+### Spreadsheet Export
+
+Repair analysis generates an Excel workbook:
+
+```text
+outputs/playlist_repair_report.xlsx
+```
+
+The spreadsheet includes:
+
+| Column | Description |
+|---|---|
+| Playlist | Playlist name |
+| Artist | Imported artist |
+| Track | Imported track |
+| Confidence | LOW / MEDIUM / HIGH suspicion |
+| Reason | Why the track was flagged |
+| Play Count | Number of plays in streaming history |
+| Minutes Played | Total listening time |
+| Skip Rate | Estimated skip frequency |
+
+This allows playlists to be manually repaired directly within Spotify.
+
+### Example Findings
+
+```text
+c-robbie williams
+- Doja Cat – Candy
+- Rich Brian – Gospel
+- D-Block Europe – Different
+
+c-supertramp
+- Gym Class Heroes – Cupid's Chokehold / Breakfast in America
+
+c-pet shop boys
+- Russ – RENT FREE
+```
+
+Many of these tracks were likely introduced by loose title matching during playlist migration.
+
+### Dependency
+
+Repair spreadsheet export requires:
+
+```bash
+pip install openpyxl
+```
+
+or simply:
+
+```bash
+pip install -r requirements.txt
+```
+
+once dependencies have been updated.
+
+
 ## Future Ideas
 
 - HTML report generation

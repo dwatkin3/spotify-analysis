@@ -34,7 +34,8 @@ def load_playlists(filepath: str) -> pd.DataFrame:
 
         rows.append({
             "name": name,
-            "num_tracks": track_count
+            "description": pl.get("description", ""),
+            "num_tracks": len(items),
         })
 
     return pd.DataFrame(rows)
